@@ -5,21 +5,21 @@ import re
 import os
 import uuid
 from bs4 import BeautifulSoup
-from elasticsearch import Elasticsearch
+# from elasticsearch import Elasticsearch
 
 cleanString = lambda x: '' if x is None else unidecode.unidecode(re.sub(r'\s+',' ',x))
 
 
 
-ELASTIC_API_URL_HOST = os.environ['ELASTIC_API_URL_HOST']
-ELASTIC_API_URL_PORT = os.environ['ELASTIC_API_URL_PORT']
-ELASTIC_API_USERNAME = os.environ['ELASTIC_API_USERNAME']
-ELASTIC_API_PASSWORD = os.environ['ELASTIC_API_PASSWORD']
-
-es=Elasticsearch(host=ELASTIC_API_URL_HOST,
-                 scheme='https',
-                 port=ELASTIC_API_URL_PORT,
-                 http_auth=(ELASTIC_API_USERNAME,ELASTIC_API_PASSWORD))
+# ELASTIC_API_URL_HOST = os.environ['ELASTIC_API_URL_HOST']
+# ELASTIC_API_URL_PORT = os.environ['ELASTIC_API_URL_PORT']
+# ELASTIC_API_USERNAME = os.environ['ELASTIC_API_USERNAME']
+# ELASTIC_API_PASSWORD = os.environ['ELASTIC_API_PASSWORD']
+#
+# es=Elasticsearch(host=ELASTIC_API_URL_HOST,
+#                  scheme='https',
+#                  port=ELASTIC_API_URL_PORT,
+#                  http_auth=(ELASTIC_API_USERNAME,ELASTIC_API_PASSWORD))
 
 
 
@@ -29,13 +29,6 @@ class ImdbSpider(scrapy.Spider):
     start_urls = ['https://www.imdb.com/title/tt0096463/fullcredits/']
 
     domain = "www.imdb.com"
-
-
-
-    movieFullCreditsUrl = ""
-
-
-
 
     def parse(self, response):
 
@@ -52,16 +45,15 @@ class ImdbSpider(scrapy.Spider):
         movieUrl = movieInfo.css('a::attr(href)').extract_first()
         movieId = movieUrl.split("/")[2].strip()
 
-        self.movieFullCreditsUrl = self.domain + movieUrl.split("?")[0] + "fullcredits/"
+       # self.movieFullCreditsUrl = self.domain + movieUrl.split("?")[0] + "fullcredits/"
 
         # Actor data
         castList = results.css("table.cast_list")
 
         totalNrCast = len(castList.css("tr td.itemprop").extract())
 
-        actorPageUrl = castList.css('tr .itemprop a::attr(href)').extract_first()
-
         for item in range(0,totalNrCast):
+            actorPageUrl = castList.css('tr .itemprop a::attr(href)')[item].extract().split("?")[0]
             actorId = castList.css('tr .itemprop a::attr(href)')[item].extract().split("/")[2].strip()
             actorName = cleanString(castList.css('tr .itemprop span.itemprop::text')[item].extract()).strip()
             # Role name missing when it is tr .character a::text
@@ -70,36 +62,67 @@ class ImdbSpider(scrapy.Spider):
 
             next_page = actorBioUrl
             if next_page is not None:
-                 yield response.follow(next_page, callback=self.parse_actor_bio, meta={'movie_id': movieId, 'movie_name': movieName, 'movie_year':movieYear,
-                                                                                       'actor_name':actorName, 'actor_id':actorId, 'role_name':roleName})
-
-        if  actorPageUrl is not None:
-            yield response.follow(actorPageUrl, callback=self.parse_actor,
-                                  meta={'movie_id': movieId, })
-
-
-
-
+                 yield response.follow(next_page, callback=self.parse_actor_bio, meta={'movie_id': movieId, 'movie_name': movieName, 'movie_year': movieYear,
+                                                                                       'actor_name': actorName, 'actor_id': actorId, 'role_name': roleName})
+            if actorPageUrl is not None:
+                yield response.follow(actorPageUrl, callback=self.parse_actor, meta={'movie_id': movieId})
 
     def parse_actor(self, response):
-
-        allMovies = response.css('div.filmo-category-section')[0]
-        totalNrMovies = len(allMovies.css('div span.year_column::text').extract())
-        for item in range(0,totalNrMovies):
+        for item in response.xpath("//*[contains(@class,'filmo-category-section')][1]/div"):
+            isMovie = item.css("::text")
+            if '(Video Game)' in str(isMovie) \
+                    or '(TV Series short)' in str(isMovie) \
+                    or '(Short Video)' in str(isMovie) or ('TV Series documentary') in str(isMovie) \
+                    or '(TV Mini-Series documentary)' in str(isMovie) \
+                    or ('TV Mini-Series') in str(isMovie) \
+                    or ('Video') in str(isMovie) \
+                    or '(TV Short)' in str(isMovie) \
+                    or '(TV Series)' in str(isMovie):
+                continue
             year = unidecode.unidecode(
-                re.sub(r'\s+', ' ', cleanString(allMovies.css('div span.year_column::text')[item].extract()))).strip()
-            if(len(year) > 3):
+                re.sub(r'\s+', ' ',
+                       cleanString(item.css('div span.year_column::text').extract_first()))).strip()
+            if (len(year) > 3):
                 year = int(year[0:4])
             else:
                 year = 0
-            if(year > 1979 and year < 1990):
-                movieUrl = allMovies.css('b a::attr(href)')[item].extract()
+            if (year > 1979 and year < 1990):
+                movieUrl = item.css('b a::attr(href)').extract_first()
                 movieId = movieUrl.split("/")[2].strip()
-                if(movieId !=  response.meta['movie_id']):
+                if (movieId != response.meta['movie_id']):
                     movieFullCreditsUrl = movieUrl.split("?")[0] + "fullcredits/"
-
                     if movieFullCreditsUrl is not None:
-                        yield response.follow(movieFullCreditsUrl, callback=self.parse, meta={'movie_year':year})
+                        yield response.follow(movieFullCreditsUrl, callback=self.parse)
+
+    # def parse_actor(self, response):
+    #
+    #     allMovies = response.css('div.filmo-category-section')[0]
+    #     totalNrMovies = len(allMovies.css('div span.year_column::text').extract())
+    #     for item in range(0, totalNrMovies):
+    #         type = allMovies.css("::text")[item].extract()
+    #         if '(TV Series)' in str(type) or '(Video Game)' in str(type) \
+    #                 or ('TV Mini-Series') in str(type) \
+    #                 or '(TV Series short)' in str(type) \
+    #                 or '(Short Video)' in str(type) \
+    #                 or ('TV Series documentary') \
+    #                 in str(type) \
+    #                 or ('Video') in str(type) \
+    #                 or '(TV Mini-Series documentary)' in str(type) \
+    #                 or '(TV Short)' in str(type):
+    #             continue
+    #         year = unidecode.unidecode(
+    #             re.sub(r'\s+', ' ', cleanString(allMovies.css('div span.year_column::text')[item].extract()))).strip()
+    #         if(len(year) > 3):
+    #             year = int(year[0:4])
+    #         else:
+    #             year = 0
+    #         if(year > 1979 and year < 1990):
+    #             movieUrl = allMovies.css('b a::attr(href)')[item].extract()
+    #             movieId = movieUrl.split("/")[2].strip()
+    #             if(movieId !=  response.meta['movie_id']):
+    #                 movieFullCreditsUrl = movieUrl.split("?")[0] + "fullcredits/"
+    #                 if movieFullCreditsUrl is not None:
+    #                     yield response.follow(movieFullCreditsUrl, callback=self.parse)
 
 
 
